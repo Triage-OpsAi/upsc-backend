@@ -1,0 +1,13 @@
+{
+  "builds": [
+    { "src": "api/index.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "api/index.py" }
+  ],
+  "_comment_crons": "18:30 UTC = 00:00 IST; daily-report is staggered 5 minutes after daily-content.",
+  "crons": [
+    { "path": "/api/cron/daily-content", "schedule": "30 18 * * *" },
+    { "path": "/api/cron/daily-report", "schedule": "35 18 * * *" }
+  ]
+}
