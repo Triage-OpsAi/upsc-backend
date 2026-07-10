@@ -5,6 +5,7 @@ from app.schemas import DailyReportOut
 from app.config import get_settings
 from app.rate_limit import limiter
 from app.security import AuthContext, require_current_user
+from app.services.report_generator import build_report_for_student
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 settings = get_settings()
@@ -34,8 +35,27 @@ async def get_report(
 
 
 async def _get_report_for_student(student_id: str, report_date: date | None):
-    d = report_date or date.today()
     async with acquire() as conn:
+        d = report_date
+        if d is None:
+            latest = await conn.fetchrow(
+                """
+                select
+                  (select max(report_date) from daily_reports where student_id=$1) as report_date,
+                  (select max((created_at at time zone 'Asia/Kolkata')::date)
+                   from student_attempts
+                   where student_id=$1 and attempt_number=1) as attempt_date
+                """,
+                student_id,
+            )
+            candidates = [
+                value for value in (latest["report_date"], latest["attempt_date"])
+                if value is not None
+            ]
+            if not candidates:
+                raise HTTPException(404, "No practice attempts found for this account")
+            d = max(candidates)
+
         row = await conn.fetchrow(
             """
             select report_date, total_attempted, total_correct, accuracy, percentile,
@@ -45,8 +65,12 @@ async def _get_report_for_student(student_id: str, report_date: date | None):
             """,
             student_id, d,
         )
-    if row is None:
-        raise HTTPException(404, "No report for this date yet - reports are generated nightly after midnight IST")
+        if row is None:
+            live_report = await build_report_for_student(conn, student_id, d)
+            if live_report is None:
+                raise HTTPException(404, "No practice attempts found for this date")
+            return DailyReportOut(**live_report)
+
     return DailyReportOut(
         report_date=row["report_date"], total_attempted=row["total_attempted"],
         total_correct=row["total_correct"], accuracy=float(row["accuracy"]),

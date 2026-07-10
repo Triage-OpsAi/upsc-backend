@@ -7,6 +7,7 @@ from app.database import acquire
 from app.rate_limit import limiter
 from app.schemas import DashboardStatsOut
 from app.security import AuthContext, require_current_user
+from app.time_utils import ist_today
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 settings = get_settings()
@@ -15,14 +16,16 @@ settings = get_settings()
 @router.get("", response_model=DashboardStatsOut)
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def get_dashboard(request: Request, current: AuthContext = Depends(require_current_user)):
-    today = date.today()
+    today = ist_today()
     async with acquire() as conn:
         row = await conn.fetchrow(
             """
             select count(*)::int as attempted,
                    count(*) filter (where is_correct)::int as correct
             from student_attempts
-            where student_id=$1 and created_at::date=$2 and attempt_number=1
+            where student_id=$1
+              and (created_at at time zone 'Asia/Kolkata')::date=$2
+              and attempt_number=1
             """,
             current.student_id,
             today,
@@ -34,7 +37,8 @@ async def get_dashboard(request: Request, current: AuthContext = Depends(require
                      count(*)::int as attempted,
                      count(*) filter (where is_correct)::int as correct
               from student_attempts
-              where created_at::date=$1 and attempt_number=1
+              where (created_at at time zone 'Asia/Kolkata')::date=$1
+                and attempt_number=1
               group by student_id
             ),
             ranked as (
@@ -52,7 +56,7 @@ async def get_dashboard(request: Request, current: AuthContext = Depends(require
         )
         attempt_days = await conn.fetch(
             """
-            select distinct created_at::date as attempt_date
+            select distinct (created_at at time zone 'Asia/Kolkata')::date as attempt_date
             from student_attempts
             where student_id=$1 and attempt_number=1
             order by attempt_date desc

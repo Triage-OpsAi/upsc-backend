@@ -67,7 +67,9 @@ class OtpVerify(BaseModel):
     otp: str = Field(min_length=4, max_length=12)
     device_id: str = Field(min_length=8, max_length=128)
     name: Optional[str] = Field(default=None, max_length=120)
-    target_exam: Optional[str] = Field(default="UPSC", max_length=80)
+    # Existing users do not send profile fields while signing in. Keeping this
+    # nullable also prevents a login from resetting their saved exam target.
+    target_exam: Optional[str] = Field(default=None, max_length=80)
 
 
 class AuthTokenOut(BaseModel):
@@ -80,6 +82,7 @@ class AuthTokenOut(BaseModel):
 class OtpRequestOut(BaseModel):
     ok: bool
     expires_in_minutes: int
+    account_exists: bool
     dev_otp: Optional[str] = None
 
 

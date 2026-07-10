@@ -33,6 +33,9 @@ async def request_otp(request: Request, body: OtpRequest):
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_TTL_MINUTES)
 
     async with acquire() as conn:
+        account_exists = bool(
+            await conn.fetchval("select exists(select 1 from students where email=$1)", email)
+        )
         await conn.execute(
             """
             insert into auth_otp_codes (email, otp_hash, purpose, expires_at, request_ip, user_agent)
@@ -62,6 +65,7 @@ async def request_otp(request: Request, body: OtpRequest):
     return OtpRequestOut(
         ok=True,
         expires_in_minutes=settings.OTP_TTL_MINUTES,
+        account_exists=account_exists,
         dev_otp=otp if settings.DEV_EXPOSE_LOGGED_OTP else None,
     )
 
@@ -359,7 +363,7 @@ async def verify_otp_login(request: Request, body: OtpVerify):
             try_send_email,
             email,
             "Welcome to The Current Affairs Gazette",
-            "Your account has been created. Your login session is valid for 2 hours on this device.",
+            "Your account has been created. Your login session is valid for up to 30 days on this device.",
         )
     elif switched_device:
         await asyncio.to_thread(

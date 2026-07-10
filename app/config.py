@@ -51,7 +51,9 @@ class Settings:
     # --- email OTP auth --------------------------------------------------
     JWT_SECRET: str = os.environ.get("JWT_SECRET") or os.environ.get("CRON_SECRET", "")
     JWT_ISSUER: str = os.environ.get("JWT_ISSUER", "upsc-current-affairs")
-    SESSION_TTL_HOURS: int = int(os.environ.get("SESSION_TTL_HOURS", "2"))
+    # A remembered browser should not require another OTP the next morning.
+    # Sessions remain device-bound and can still be revoked on logout/new login.
+    SESSION_TTL_HOURS: int = int(os.environ.get("SESSION_TTL_HOURS", str(24 * 30)))
     OTP_TTL_MINUTES: int = int(os.environ.get("OTP_TTL_MINUTES", "10"))
     OTP_MAX_ATTEMPTS: int = int(os.environ.get("OTP_MAX_ATTEMPTS", "5"))
     DEVICE_SWITCH_WINDOW_DAYS: int = int(os.environ.get("DEVICE_SWITCH_WINDOW_DAYS", "30"))

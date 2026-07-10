@@ -5,13 +5,14 @@ can trigger (and pay for) OpenAI generation.
 """
 
 from fastapi import APIRouter, Request, Header, HTTPException
-from datetime import date, datetime
+from datetime import datetime, timedelta
 import logging
 from app.database import acquire
 from app.config import get_settings
 from app.rate_limit import limiter
 from app.services.content_generator import store_researched_topics
 from app.services.report_generator import generate_reports_for_date
+from app.time_utils import ist_today
 
 router = APIRouter(prefix="/api/cron", tags=["cron"])
 settings = get_settings()
@@ -41,20 +42,25 @@ async def daily_content(
     """Runs at midnight IST. From LIVE_CRON_START_DATE onward, researches + stores
     today's current affairs (topics + questions + breakdowns)."""
     _check_secret(authorization, x_cron_secret)
-    today = date.today()
+    today = ist_today()
     live_start = datetime.strptime(settings.LIVE_CRON_START_DATE, "%Y-%m-%d").date()
     logger.info("daily-content date check: today=%s live_start=%s should_run=%s", today, live_start, today >= live_start)
     if today < live_start:
         return {"skipped": True, "reason": f"live cron starts {live_start}"}
 
     async with acquire() as conn:
-        already = await conn.fetchval(
-            "select 1 from generation_log where run_type='daily_content_cron' and run_date=$1", today
+        previous_status = await conn.fetchval(
+            "select status from generation_log where run_type='daily_content_cron' and run_date=$1", today
         )
-        if already:
+        if previous_status == "success":
             return {"skipped": True, "reason": "already ran today"}
         await conn.execute(
-            "insert into generation_log (run_type, run_date, status) values ('daily_content_cron',$1,'started')",
+            """
+            insert into generation_log (run_type, run_date, status)
+            values ('daily_content_cron',$1,'started')
+            on conflict (run_type, run_date) do update
+            set status='started', details='{}'::jsonb
+            """,
             today,
         )
         try:
@@ -82,30 +88,34 @@ async def daily_report(
     authorization: str | None = Header(None),
     x_cron_secret: str | None = Header(None),
 ):
-    """Runs at midnight IST (right after daily-content). Generates every active
-    student's personalised report for 'today' (i.e. the day that just ended)."""
+    """Runs just after midnight IST and reports on the day that just ended."""
     _check_secret(authorization, x_cron_secret)
-    today = date.today()
+    report_date = ist_today() - timedelta(days=1)
     async with acquire() as conn:
-        already = await conn.fetchval(
-            "select 1 from generation_log where run_type='daily_report_cron' and run_date=$1", today
+        previous_status = await conn.fetchval(
+            "select status from generation_log where run_type='daily_report_cron' and run_date=$1", report_date
         )
-        if already:
-            return {"skipped": True, "reason": "already ran today"}
+        if previous_status == "success":
+            return {"skipped": True, "reason": "report already generated", "report_date": report_date}
         await conn.execute(
-            "insert into generation_log (run_type, run_date, status) values ('daily_report_cron',$1,'started')",
-            today,
+            """
+            insert into generation_log (run_type, run_date, status)
+            values ('daily_report_cron',$1,'started')
+            on conflict (run_type, run_date) do update
+            set status='started', details='{}'::jsonb
+            """,
+            report_date,
         )
         try:
-            count = await generate_reports_for_date(conn, today)
+            count = await generate_reports_for_date(conn, report_date)
             await conn.execute(
                 "update generation_log set status='success', details=$2 where run_type='daily_report_cron' and run_date=$1",
-                today, {"reports_generated": count},
+                report_date, {"reports_generated": count},
             )
-            return {"reports_generated": count}
+            return {"reports_generated": count, "report_date": report_date}
         except Exception as e:
             await conn.execute(
                 "update generation_log set status='failed', details=$2 where run_type='daily_report_cron' and run_date=$1",
-                today, {"error": str(e)},
+                report_date, {"error": str(e)},
             )
             raise
