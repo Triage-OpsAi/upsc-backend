@@ -12,7 +12,6 @@ from app.config import get_settings
 from app.rate_limit import limiter
 from app.services.content_generator import store_researched_topics
 from app.services.report_generator import generate_reports_for_date
-from app.openai_client import research_todays_current_affairs
 
 router = APIRouter(prefix="/api/cron", tags=["cron"])
 settings = get_settings()
@@ -59,6 +58,8 @@ async def daily_content(
             today,
         )
         try:
+            from app.openai_client import research_todays_current_affairs
+
             topics = await research_todays_current_affairs(today.isoformat(), count=10)
             created = await store_researched_topics(conn, today.month, today.year, topics)
             await conn.execute(

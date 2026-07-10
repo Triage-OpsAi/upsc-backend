@@ -10,7 +10,6 @@ import asyncpg
 import logging
 import re
 from datetime import date, datetime
-from app.openai_client import generate_topics_and_questions, generate_breakdown
 
 logger = logging.getLogger(__name__)
 MAX_BULK_TOPICS_PER_MONTH = 30
@@ -18,6 +17,8 @@ MAX_BULK_TOPICS_PER_MONTH = 30
 
 async def seed_month(conn: asyncpg.Connection, month: int, year: int, count: int = MAX_BULK_TOPICS_PER_MONTH) -> int:
     """Generate + store `count` topics (with questions + breakdowns) for one month."""
+    from app.openai_client import generate_topics_and_questions
+
     requested_count = min(max(0, count), MAX_BULK_TOPICS_PER_MONTH)
     topics = await generate_topics_and_questions(month, year, count=requested_count)
     created = 0
@@ -84,6 +85,8 @@ async def _store_topic(conn: asyncpg.Connection, month: int, year: int, t: dict)
 
         # Generate the 6-slide breakdown up front so every student who gets
         # it wrong sees the SAME pre-generated breakdown (no per-student cost).
+        from app.openai_client import generate_breakdown
+
         slides = await generate_breakdown(
             q["question_text"], q["correct_option"], q.get("explanation", ""), t.get("subject_tags", []),
         )

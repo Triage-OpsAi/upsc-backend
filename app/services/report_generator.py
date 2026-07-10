@@ -9,7 +9,6 @@ Vercel Cron hits at 1am IST). For every student who was active that day:
 
 import asyncpg
 from datetime import date
-from app.openai_client import generate_report_feedback
 
 
 EXAM_SUBJECT_WEIGHTS = {
@@ -38,6 +37,8 @@ async def generate_reports_for_date(conn: asyncpg.Connection, report_date: date)
             continue
         percentile = await _compute_percentile(conn, report_date, stats["accuracy"])
         readiness = _exam_readiness(stats["subject_breakdown"])
+        from app.openai_client import generate_report_feedback
+
         feedback = await generate_report_feedback({
             "target_exam": s["target_exam"],
             **stats,
