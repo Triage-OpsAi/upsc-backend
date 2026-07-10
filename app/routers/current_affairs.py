@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, Request
 from app.database import acquire
-from app.schemas import TopicListOut, TopicOut, PageMeta, NextTopicOut
+from app.schemas import ArchiveMonthOut, TopicListOut, TopicOut, PageMeta, NextTopicOut
 from app.config import get_settings
 from app.rate_limit import limiter
 
@@ -18,31 +18,39 @@ async def list_topics(
     page_size: int = Query(10, ge=1, le=settings.MAX_PAGE_SIZE),
 ):
     """Month-wise, paginated (max 10/page) list of published current-affairs topics."""
-    where = ["status = 'published'"]
+    where = [
+        "t.status = 'published'",
+        "exists (select 1 from ca_questions available_q where available_q.topic_id = t.id)",
+    ]
     params: list = []
     if month:
         params.append(month)
-        where.append(f"month = ${len(params)}")
+        where.append(f"t.month = ${len(params)}")
     if year:
         params.append(year)
-        where.append(f"year = ${len(params)}")
+        where.append(f"t.year = ${len(params)}")
     where_sql = " and ".join(where)
 
     offset = (page - 1) * page_size
     params_page = params + [page_size, offset]
 
     async with acquire() as conn:
-        total = await conn.fetchval(f"select count(*) from ca_topics where {where_sql}", *params)
+        total = await conn.fetchval(f"select count(*) from ca_topics t where {where_sql}", *params)
         rows = await conn.fetch(
             f"""
-            select id, month, year, title, summary, subject_tags, source_date
-            from ca_topics
+            select t.id, t.month, t.year, t.title, t.summary, t.subject_tags, t.source_date,
+                   (select q.question_text
+                    from ca_questions q
+                    where q.topic_id = t.id
+                    order by q.created_at asc, q.id asc
+                    limit 1) as question_text
+            from ca_topics t
             where {where_sql}
-            order by year desc,
-                     month desc,
-                     source_date desc nulls last,
-                     created_at desc,
-                     id desc
+            order by t.year desc,
+                     t.month desc,
+                     t.source_date desc nulls last,
+                     t.created_at desc,
+                     t.id desc
             limit ${len(params_page) - 1} offset ${len(params_page)}
             """,
             *params_page,
@@ -57,11 +65,74 @@ async def list_topics(
             summary=r["summary"],
             subject_tags=r["subject_tags"] or [],
             source_date=r["source_date"],
+            question_text=r["question_text"],
         )
         for r in rows
     ]
-    total_pages = max(1, (total + page_size - 1) // page_size)
+    total_pages = (total + page_size - 1) // page_size if total else 0
     return TopicListOut(items=items, meta=PageMeta(page=page, page_size=page_size, total_items=total, total_pages=total_pages))
+
+
+@router.get("/months", response_model=list[ArchiveMonthOut])
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def available_months(request: Request):
+    """Return one archive filter option per month that has practice questions."""
+    async with acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select t.year, t.month, count(*)::int as question_count
+            from ca_topics t
+            where t.status = 'published'
+              and exists (select 1 from ca_questions q where q.topic_id = t.id)
+            group by t.year, t.month
+            order by t.year desc, t.month desc
+            """
+        )
+    return [
+        ArchiveMonthOut(
+            year=row["year"],
+            month=row["month"],
+            question_count=row["question_count"],
+        )
+        for row in rows
+    ]
+
+
+@router.get("/practice/latest", response_model=NextTopicOut)
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def latest_practice_topic(request: Request):
+    """Return the newest topic only when it has an actual practice question."""
+    async with acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select t.id, t.month, t.year, t.title, t.summary, t.subject_tags, t.source_date,
+                   (select q.question_text
+                    from ca_questions q
+                    where q.topic_id = t.id
+                    order by q.created_at asc, q.id asc
+                    limit 1) as question_text
+            from ca_topics t
+            where t.status = 'published'
+              and exists (select 1 from ca_questions q where q.topic_id = t.id)
+            order by t.year desc, t.month desc, t.source_date desc nulls last,
+                     t.created_at desc, t.id desc
+            limit 1
+            """
+        )
+    if row is None:
+        return NextTopicOut(topic=None)
+    return NextTopicOut(
+        topic=TopicOut(
+            id=str(row["id"]),
+            month=row["month"],
+            year=row["year"],
+            title=row["title"],
+            summary=row["summary"],
+            subject_tags=row["subject_tags"] or [],
+            source_date=row["source_date"],
+            question_text=row["question_text"],
+        )
+    )
 
 
 @router.get("/{topic_id}/next", response_model=NextTopicOut)

@@ -2,8 +2,10 @@ import unittest
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
+from app.database import _is_connection_capacity_error, _transaction_pooler_dsn
+from app.routers.auth import _device_warning
 from app.routers import reports
-from app.schemas import OtpRequestOut, OtpVerify
+from app.schemas import ArchiveMonthOut, OtpRequestOut, OtpVerify
 from app.services.report_generator import _personalized_feedback
 
 
@@ -47,8 +49,31 @@ class AuthRegressionTests(unittest.TestCase):
             ok=True,
             expires_in_minutes=10,
             account_exists=True,
+            resend_after_seconds=30,
         )
         self.assertTrue(response.account_exists)
+        self.assertEqual(response.resend_after_seconds, 30)
+
+    def test_device_limit_warning_is_visible_before_suspension(self):
+        warning = _device_warning(2)
+        self.assertIsNotNone(warning)
+        self.assertIn("Signing in on another new device", warning)
+
+
+class ReliabilityRegressionTests(unittest.TestCase):
+    def test_supabase_session_pooler_is_changed_to_transaction_pooler(self):
+        original = "postgresql://user:secret@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+        converted = _transaction_pooler_dsn(original)
+        self.assertIn(":6543/postgres", converted)
+        self.assertNotIn(":5432/postgres", converted)
+
+    def test_capacity_error_marker_is_retryable(self):
+        error = RuntimeError("(EMAXCONNSESSION) max clients reached in session mode")
+        self.assertTrue(_is_connection_capacity_error(error))
+
+    def test_archive_month_includes_question_count(self):
+        month = ArchiveMonthOut(year=2026, month=7, question_count=30)
+        self.assertEqual(month.question_count, 30)
 
 
 class ReportRegressionTests(unittest.IsolatedAsyncioTestCase):

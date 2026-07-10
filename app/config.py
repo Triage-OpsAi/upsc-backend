@@ -31,11 +31,14 @@ class Settings:
     # Vercel spins up many short-lived serverless instances. Each instance
     # keeps only a tiny pool and closes idle connections quickly.
     DB_POOL_MIN_SIZE: int = int(os.environ.get("DB_POOL_MIN_SIZE", "0"))
-    DB_POOL_MAX_SIZE: int = int(os.environ.get("DB_POOL_MAX_SIZE", "5"))
+    # Serverless instances multiply this value. One connection per instance is
+    # enough when Supabase's transaction pooler is in front of Postgres.
+    DB_POOL_MAX_SIZE: int = int(os.environ.get("DB_POOL_MAX_SIZE", "1"))
     DB_POOL_MAX_INACTIVE_CONN_LIFETIME: float = float(
         os.environ.get("DB_POOL_MAX_INACTIVE_CONN_LIFETIME", "30")
     )  # seconds an idle connection is kept before being closed
     DB_COMMAND_TIMEOUT: float = float(os.environ.get("DB_COMMAND_TIMEOUT", "10"))
+    DB_ACQUIRE_RETRIES: int = int(os.environ.get("DB_ACQUIRE_RETRIES", "3"))
 
     # --- rate limiting -----------------------------------------------------
     RATE_LIMIT_DEFAULT: str = os.environ.get("RATE_LIMIT_DEFAULT", "60/minute")
@@ -55,6 +58,7 @@ class Settings:
     # Sessions remain device-bound and can still be revoked on logout/new login.
     SESSION_TTL_HOURS: int = int(os.environ.get("SESSION_TTL_HOURS", str(24 * 30)))
     OTP_TTL_MINUTES: int = int(os.environ.get("OTP_TTL_MINUTES", "10"))
+    OTP_RESEND_COOLDOWN_SECONDS: int = int(os.environ.get("OTP_RESEND_COOLDOWN_SECONDS", "30"))
     OTP_MAX_ATTEMPTS: int = int(os.environ.get("OTP_MAX_ATTEMPTS", "5"))
     DEVICE_SWITCH_WINDOW_DAYS: int = int(os.environ.get("DEVICE_SWITCH_WINDOW_DAYS", "30"))
     DEVICE_LIMIT_BEFORE_SUSPENSION: int = int(os.environ.get("DEVICE_LIMIT_BEFORE_SUSPENSION", "2"))

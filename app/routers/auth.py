@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -33,13 +34,38 @@ async def request_otp(request: Request, body: OtpRequest):
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_TTL_MINUTES)
 
     async with acquire() as conn:
+        last_requested_at = await conn.fetchval(
+            """
+            select created_at
+            from auth_otp_codes
+            where email=$1 and purpose=$2
+            order by created_at desc
+            limit 1
+            """,
+            email,
+            body.purpose or "login",
+        )
+        if last_requested_at is not None:
+            elapsed = (datetime.now(timezone.utc) - last_requested_at).total_seconds()
+            remaining = math.ceil(settings.OTP_RESEND_COOLDOWN_SECONDS - elapsed)
+            if remaining > 0:
+                raise HTTPException(
+                    429,
+                    detail={
+                        "code": "otp_resend_cooldown",
+                        "message": f"Please wait {remaining} seconds before requesting another OTP.",
+                        "retry_after_seconds": remaining,
+                    },
+                    headers={"Retry-After": str(remaining)},
+                )
         account_exists = bool(
             await conn.fetchval("select exists(select 1 from students where email=$1)", email)
         )
-        await conn.execute(
+        otp_id = await conn.fetchval(
             """
             insert into auth_otp_codes (email, otp_hash, purpose, expires_at, request_ip, user_agent)
             values ($1,$2,$3,$4,$5,$6)
+            returning id
             """,
             email,
             hash_otp(email, otp),
@@ -52,20 +78,39 @@ async def request_otp(request: Request, body: OtpRequest):
     if settings.DEV_EXPOSE_LOGGED_OTP:
         logger.warning("DEV OTP for %s is %s", email, otp)
 
-    await asyncio.to_thread(
-        send_email,
-        email,
-        "Your Current Affairs Gazette OTP",
-        (
-            "Use this one-time password to sign in to The Current Affairs Gazette:\n\n"
-            f"{otp}\n\n"
-            f"It expires in {settings.OTP_TTL_MINUTES} minutes. If you did not request this, ignore this email."
-        ),
-    )
+    try:
+        await asyncio.to_thread(
+            send_email,
+            email,
+            "Your Current Affairs Gazette OTP",
+            (
+                "Use this one-time password to sign in to The Current Affairs Gazette:\n\n"
+                f"{otp}\n\n"
+                f"It expires in {settings.OTP_TTL_MINUTES} minutes. If you did not request this, ignore this email."
+            ),
+        )
+    except Exception as error:
+        async with acquire() as conn:
+            await conn.execute("delete from auth_otp_codes where id=$1", otp_id)
+        logger.exception("OTP email delivery failed for %s", email)
+        raise HTTPException(503, "Could not send the OTP email. Please try again.") from error
+
+    async with acquire() as conn:
+        await conn.execute(
+            """
+            update auth_otp_codes
+            set consumed_at=now()
+            where email=$1 and purpose=$2 and consumed_at is null and id<>$3
+            """,
+            email,
+            body.purpose or "login",
+            otp_id,
+        )
     return OtpRequestOut(
         ok=True,
         expires_in_minutes=settings.OTP_TTL_MINUTES,
         account_exists=account_exists,
+        resend_after_seconds=settings.OTP_RESEND_COOLDOWN_SECONDS,
         dev_otp=otp if settings.DEV_EXPOSE_LOGGED_OTP else None,
     )
 
@@ -82,6 +127,7 @@ async def verify_otp_login(request: Request, body: OtpVerify):
     switched_device = False
     suspended_until = None
     suspension_reason = None
+    distinct_devices = 0
 
     async with acquire() as conn:
         otp_row = await conn.fetchrow(
@@ -272,7 +318,7 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                     login_ip,
                     user_agent,
                 )
-                distinct_devices = await conn.fetchval(
+                distinct_devices = int(await conn.fetchval(
                     """
                     select count(distinct device_id)
                     from auth_device_events
@@ -282,7 +328,7 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                     """,
                     student["id"],
                     settings.DEVICE_SWITCH_WINDOW_DAYS,
-                )
+                ) or 0)
                 if distinct_devices > settings.DEVICE_LIMIT_BEFORE_SUSPENSION:
                     suspended_until = now + timedelta(days=settings.ACCOUNT_SUSPENSION_DAYS)
                     suspension_reason = (
@@ -356,7 +402,20 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                 "This protects your account because it was used across too many devices."
             ),
         )
-        raise HTTPException(403, f"Account suspended until {suspended_until.isoformat()}")
+        raise HTTPException(
+            403,
+            detail={
+                "code": "device_limit_suspension",
+                "message": (
+                    f"Security warning: this account was used on more than "
+                    f"{settings.DEVICE_LIMIT_BEFORE_SUSPENSION} devices within "
+                    f"{settings.DEVICE_SWITCH_WINDOW_DAYS} days and is suspended until "
+                    f"{suspended_until.isoformat()}."
+                ),
+                "suspended_until": suspended_until.isoformat(),
+                "device_limit": settings.DEVICE_LIMIT_BEFORE_SUSPENSION,
+            },
+        )
 
     if new_account:
         await asyncio.to_thread(
@@ -376,7 +435,11 @@ async def verify_otp_login(request: Request, body: OtpVerify):
     return AuthTokenOut(
         access_token=token,
         expires_at=session["expires_at"].isoformat(),
-        student=_student_out(student, active_device_id=device_id),
+        student=_student_out(
+            student,
+            active_device_id=device_id,
+            recent_device_count=distinct_devices,
+        ),
     )
 
 
@@ -401,9 +464,10 @@ async def me(current: AuthContext = Depends(require_current_user)):
             """,
             current.student_id,
         )
+        recent_device_count = await _recent_device_count(conn, current.student_id)
     if student is None:
         raise HTTPException(404, "Account not found")
-    return _student_out(student)
+    return _student_out(student, recent_device_count=recent_device_count)
 
 
 @router.patch("/profile", response_model=StudentOut)
@@ -432,10 +496,39 @@ async def update_profile(body: ProfileUpdate, current: AuthContext = Depends(req
             body.bio,
             body.city,
         )
-    return _student_out(student)
+        recent_device_count = await _recent_device_count(conn, current.student_id)
+    return _student_out(student, recent_device_count=recent_device_count)
 
 
-def _student_out(row, active_device_id: str | None = None) -> StudentOut:
+async def _recent_device_count(conn, student_id: str) -> int:
+    return int(await conn.fetchval(
+        """
+        select count(distinct device_id)
+        from auth_device_events
+        where student_id=$1
+          and event_type='login_verified'
+          and created_at >= now() - make_interval(days => $2::int)
+        """,
+        student_id,
+        settings.DEVICE_SWITCH_WINDOW_DAYS,
+    ) or 0)
+
+
+def _device_warning(recent_device_count: int) -> str | None:
+    if recent_device_count < settings.DEVICE_LIMIT_BEFORE_SUSPENSION:
+        return None
+    return (
+        f"Security warning: this account has been used on {recent_device_count} devices "
+        f"within {settings.DEVICE_SWITCH_WINDOW_DAYS} days. Signing in on another new "
+        f"device will suspend the account for {settings.ACCOUNT_SUSPENSION_DAYS} days."
+    )
+
+
+def _student_out(
+    row,
+    active_device_id: str | None = None,
+    recent_device_count: int = 0,
+) -> StudentOut:
     return StudentOut(
         id=str(row["id"]),
         device_id=active_device_id or row["active_device_id"] or row["device_id"],
@@ -446,4 +539,7 @@ def _student_out(row, active_device_id: str | None = None) -> StudentOut:
         bio=row["bio"],
         city=row["city"],
         suspended_until=row["suspended_until"],
+        recent_device_count=recent_device_count,
+        device_limit=settings.DEVICE_LIMIT_BEFORE_SUSPENSION,
+        device_warning=_device_warning(recent_device_count),
     )

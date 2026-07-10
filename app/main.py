@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from app.config import get_settings
 from app.rate_limit import limiter
-from app.database import get_pool, close_pool
+from app.database import DatabaseUnavailable, get_pool, close_pool
 from app.routers import auth, current_affairs, dashboard, practice, reports, cron
 
 settings = get_settings()
@@ -25,6 +26,15 @@ app = FastAPI(title="UPSC Current Affairs Practice API", lifespan=lifespan)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(DatabaseUnavailable)
+async def database_unavailable_handler(request, exc):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "The database is busy. Please retry in a moment."},
+        headers={"Retry-After": "1"},
+    )
 
 app.add_middleware(
     CORSMiddleware,

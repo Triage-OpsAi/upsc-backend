@@ -18,6 +18,7 @@ class TopicOut(BaseModel):
     summary: Optional[str]
     subject_tags: list[str]
     source_date: Optional[date]
+    question_text: Optional[str] = None
 
 
 class TopicListOut(BaseModel):
@@ -27,6 +28,12 @@ class TopicListOut(BaseModel):
 
 class NextTopicOut(BaseModel):
     topic: Optional[TopicOut] = None
+
+
+class ArchiveMonthOut(BaseModel):
+    year: int
+    month: int
+    question_count: int
 
 
 class QuestionOut(BaseModel):
@@ -55,6 +62,9 @@ class StudentOut(BaseModel):
     bio: Optional[str] = None
     city: Optional[str] = None
     suspended_until: Optional[datetime] = None
+    recent_device_count: int = 0
+    device_limit: int = 2
+    device_warning: Optional[str] = None
 
 
 class OtpRequest(BaseModel):
@@ -83,6 +93,7 @@ class OtpRequestOut(BaseModel):
     ok: bool
     expires_in_minutes: int
     account_exists: bool
+    resend_after_seconds: int
     dev_otp: Optional[str] = None
 
 
