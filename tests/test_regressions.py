@@ -1,12 +1,15 @@
 import unittest
+import json
+import time
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
 from app.database import _is_connection_capacity_error, _transaction_pooler_dsn
+from app import redis_cache
 from app.routers.auth import _device_warning
 from app.routers import reports
 from app.schemas import ArchiveMonthOut, OtpRequestOut, OtpVerify
-from app.services.report_generator import _personalized_feedback
+from app.services.report_generator import _personalized_feedback, _practice_recommendations
 
 
 class _AcquireContext:
@@ -76,6 +79,29 @@ class ReliabilityRegressionTests(unittest.TestCase):
         self.assertEqual(month.question_count, 30)
 
 
+class RedisSessionCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cached_session_requires_matching_token_fingerprint(self):
+        token = "valid-token"
+        cached = json.dumps({
+            "session_id": "session-1",
+            "student_id": "student-1",
+            "email": "student@example.com",
+            "device_id": "device-1",
+            "target_exam": "UPSC",
+            "expires_at": int(time.time()) + 60,
+            "token_fingerprint": redis_cache._token_fingerprint(token),
+        })
+        with patch.object(redis_cache, "_command", AsyncMock(return_value=cached)):
+            self.assertIsNotNone(await redis_cache.get_cached_session("session-1", token))
+            self.assertIsNone(await redis_cache.get_cached_session("session-1", "different-token"))
+
+    async def test_session_cache_invalidation_uses_session_key(self):
+        command = AsyncMock(return_value=1)
+        with patch.object(redis_cache, "_command", command):
+            await redis_cache.delete_session_cache("session-1")
+        command.assert_awaited_once_with("DEL", "upsc:auth:session:session-1")
+
+
 class ReportRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_date_uses_latest_attempt_when_newer_than_saved_report(self):
         conn = _LatestAttemptConnection()
@@ -116,6 +142,22 @@ class ReportRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("UPSC Prelims", feedback)
         self.assertIn("polity", feedback)
         self.assertIn("economy", feedback)
+
+    def test_practice_recommendations_rank_weakest_concepts_first(self):
+        recommendations = _practice_recommendations({
+            "Constitutional bodies": {
+                "topic_id": "topic-1", "total": 2, "correct": 1, "accuracy": 50.0,
+            },
+            "Monetary policy": {
+                "topic_id": "topic-2", "total": 1, "correct": 0, "accuracy": 0.0,
+            },
+            "Biodiversity": {
+                "topic_id": "topic-3", "total": 1, "correct": 1, "accuracy": 100.0,
+            },
+        })
+
+        self.assertEqual([item["topic_id"] for item in recommendations], ["topic-2", "topic-1"])
+        self.assertIn("core idea", recommendations[0]["reason"])
 
 
 if __name__ == "__main__":

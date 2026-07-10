@@ -150,6 +150,8 @@ class DailyReportOut(BaseModel):
     accuracy: float
     percentile: float
     subject_breakdown: dict[str, Any]
+    concept_breakdown: dict[str, Any] = Field(default_factory=dict)
+    practice_recommendations: list[dict[str, Any]] = Field(default_factory=list)
     exam_wise_readiness: dict[str, Any]
     ai_feedback: Optional[str]
 

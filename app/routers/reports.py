@@ -65,8 +65,8 @@ async def _get_report_for_student(student_id: str, report_date: date | None):
             """,
             student_id, d,
         )
+        live_report = await build_report_for_student(conn, student_id, d)
         if row is None:
-            live_report = await build_report_for_student(conn, student_id, d)
             if live_report is None:
                 raise HTTPException(404, "No practice attempts found for this date")
             return DailyReportOut(**live_report)
@@ -76,4 +76,6 @@ async def _get_report_for_student(student_id: str, report_date: date | None):
         total_correct=row["total_correct"], accuracy=float(row["accuracy"]),
         percentile=float(row["percentile"]), subject_breakdown=row["subject_breakdown"],
         exam_wise_readiness=row["exam_wise_readiness"], ai_feedback=row["ai_feedback"],
+        concept_breakdown=(live_report or {}).get("concept_breakdown", {}),
+        practice_recommendations=(live_report or {}).get("practice_recommendations", []),
     )

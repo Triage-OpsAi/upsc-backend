@@ -52,6 +52,8 @@ async def generate_reports_for_date(conn: asyncpg.Connection, report_date: date)
                 "total_correct": report["total_correct"],
                 "accuracy": report["accuracy"],
                 "subject_breakdown": report["subject_breakdown"],
+                "concept_breakdown": report["concept_breakdown"],
+                "practice_recommendations": report["practice_recommendations"],
                 "percentile": report["percentile"],
             })
             if generated_feedback:
@@ -139,11 +141,39 @@ async def _compute_stats(conn: asyncpg.Connection, student_id, report_date: date
     )
     subject_breakdown = {r["subject"]: {"total": r["total"], "correct": r["correct"]} for r in subject_rows}
 
+    concept_rows = await conn.fetch(
+        """
+        select t.id as topic_id, t.title as concept,
+               count(*) as total,
+               count(*) filter (where a.is_correct) as correct
+        from student_attempts a
+        join ca_questions q on q.id = a.question_id
+        join ca_topics t on t.id = q.topic_id
+        where a.student_id=$1
+          and (a.created_at at time zone 'Asia/Kolkata')::date=$2
+          and a.attempt_number=1
+        group by t.id, t.title
+        order by t.title
+        """,
+        student_id, report_date,
+    )
+    concept_breakdown = {
+        r["concept"]: {
+            "topic_id": str(r["topic_id"]),
+            "total": r["total"],
+            "correct": r["correct"],
+            "accuracy": round(100.0 * r["correct"] / r["total"], 1) if r["total"] else 0.0,
+        }
+        for r in concept_rows
+    }
+
     return {
         "total_attempted": total,
         "total_correct": correct,
         "accuracy": accuracy,
         "subject_breakdown": subject_breakdown,
+        "concept_breakdown": concept_breakdown,
+        "practice_recommendations": _practice_recommendations(concept_breakdown),
     }
 
 
@@ -179,6 +209,34 @@ def _exam_readiness(subject_breakdown: dict) -> dict:
             score_w += w * (perf["correct"] / perf["total"])
         result[exam] = round(100 * score_w / total_w, 1) if total_w else 0.0
     return result
+
+
+def _practice_recommendations(concept_breakdown: dict) -> list[dict]:
+    """Return the weakest concepts first with an actionable practice route."""
+    ranked = sorted(
+        concept_breakdown.items(),
+        key=lambda item: (item[1]["accuracy"], -item[1]["total"], item[0].lower()),
+    )
+    recommendations = []
+    for concept, performance in ranked:
+        accuracy = performance["accuracy"]
+        if accuracy < 50:
+            reason = "Rebuild the core idea, then attempt this question again."
+        elif accuracy < 75:
+            reason = "One more focused attempt will strengthen this weak spot."
+        elif accuracy < 100:
+            reason = "Review the explanation and practise once more for consistency."
+        else:
+            continue
+        recommendations.append({
+            "concept": concept,
+            "topic_id": performance["topic_id"],
+            "accuracy": accuracy,
+            "reason": reason,
+        })
+        if len(recommendations) == 3:
+            break
+    return recommendations
 
 
 def _personalized_feedback(target_exam: str, stats: dict) -> str:

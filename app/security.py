@@ -11,6 +11,7 @@ from fastapi import Header, HTTPException
 
 from app.config import get_settings
 from app.database import acquire
+from app.redis_cache import get_cached_session, set_cached_session
 
 settings = get_settings()
 
@@ -112,6 +113,22 @@ async def require_current_user(
     if not x_device_id or x_device_id != token_device_id:
         raise HTTPException(401, "This session is valid only on the device that created it")
 
+    cached = await get_cached_session(str(payload["sid"]), token)
+    if cached is not None:
+        if (
+            cached.get("student_id") == str(payload["sub"])
+            and cached.get("device_id") == token_device_id
+            and cached.get("email") == payload.get("email")
+        ):
+            return AuthContext(
+                student_id=cached["student_id"],
+                session_id=cached["session_id"],
+                email=cached["email"],
+                device_id=cached["device_id"],
+                name=cached.get("name"),
+                target_exam=cached.get("target_exam") or "UPSC",
+            )
+
     async with acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -135,6 +152,17 @@ async def require_current_user(
 
         await conn.execute("update auth_sessions set last_seen_at=now() where id=$1", row["session_id"])
         await conn.execute("update students set last_active_at=now() where id=$1", row["student_id"])
+
+    await set_cached_session(
+        session_id=str(row["session_id"]),
+        token=token,
+        expires_at=int(payload["exp"]),
+        student_id=str(row["student_id"]),
+        email=row["email"],
+        device_id=row["device_id"],
+        name=row["name"],
+        target_exam=row["target_exam"] or "UPSC",
+    )
 
     return AuthContext(
         student_id=str(row["student_id"]),

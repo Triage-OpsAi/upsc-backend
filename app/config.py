@@ -40,6 +40,13 @@ class Settings:
     DB_COMMAND_TIMEOUT: float = float(os.environ.get("DB_COMMAND_TIMEOUT", "10"))
     DB_ACQUIRE_RETRIES: int = int(os.environ.get("DB_ACQUIRE_RETRIES", "3"))
 
+    # --- optional Upstash Redis session cache ---------------------------
+    UPSTASH_REDIS_REST_URL: str = os.environ.get("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+    UPSTASH_REDIS_REST_TOKEN: str = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+    REDIS_SESSION_CACHE_TTL_SECONDS: int = int(
+        os.environ.get("REDIS_SESSION_CACHE_TTL_SECONDS", "300")
+    )
+
     # --- rate limiting -----------------------------------------------------
     RATE_LIMIT_DEFAULT: str = os.environ.get("RATE_LIMIT_DEFAULT", "60/minute")
     RATE_LIMIT_SUBMIT: str = os.environ.get("RATE_LIMIT_SUBMIT", "20/minute")

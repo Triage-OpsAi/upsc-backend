@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.database import acquire
 from app.mailer import send_email, try_send_email
 from app.rate_limit import limiter
+from app.redis_cache import delete_session_cache, delete_session_caches
 from app.schemas import AuthTokenOut, OtpRequest, OtpRequestOut, OtpVerify, ProfileUpdate, StudentOut
 from app.security import (
     AuthContext,
@@ -128,6 +129,7 @@ async def verify_otp_login(request: Request, body: OtpVerify):
     suspended_until = None
     suspension_reason = None
     distinct_devices = 0
+    revoked_session_ids: list[str] = []
 
     async with acquire() as conn:
         otp_row = await conn.fetchrow(
@@ -329,6 +331,13 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                     student["id"],
                     settings.DEVICE_SWITCH_WINDOW_DAYS,
                 ) or 0)
+                revoked_session_ids = [
+                    str(row["id"])
+                    for row in await conn.fetch(
+                        "select id from auth_sessions where student_id=$1 and revoked_at is null",
+                        student["id"],
+                    )
+                ]
                 if distinct_devices > settings.DEVICE_LIMIT_BEFORE_SUSPENSION:
                     suspended_until = now + timedelta(days=settings.ACCOUNT_SUSPENSION_DAYS)
                     suspension_reason = (
@@ -390,6 +399,8 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                     )
                     await conn.execute("update auth_sessions set token_hash=$2 where id=$1", session["id"], hash_token(token))
 
+    await delete_session_caches(revoked_session_ids)
+
     if suspended_until is not None:
         await asyncio.to_thread(
             try_send_email,
@@ -450,6 +461,7 @@ async def logout(current: AuthContext = Depends(require_current_user)):
             "update auth_sessions set revoked_at=now(), revoked_reason='logout' where id=$1",
             current.session_id,
         )
+    await delete_session_cache(current.session_id)
     return {"ok": True}
 
 
@@ -497,6 +509,7 @@ async def update_profile(body: ProfileUpdate, current: AuthContext = Depends(req
             body.city,
         )
         recent_device_count = await _recent_device_count(conn, current.student_id)
+    await delete_session_cache(current.session_id)
     return _student_out(student, recent_device_count=recent_device_count)
 
 
