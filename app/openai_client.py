@@ -15,11 +15,13 @@ refusing anything else (chit-chat, code help, unrelated trivia, etc).
 import asyncio
 import json
 import logging
+import httpx
 from openai import AsyncOpenAI, OpenAIError
 from app.config import get_settings
 
 settings = get_settings()
-_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=60.0, max_retries=0)
+_client: AsyncOpenAI | None = None
+_http_client: httpx.AsyncClient | None = None
 logger = logging.getLogger(__name__)
 
 SCOPE_GUARDRAIL = (
@@ -38,8 +40,20 @@ SCOPE_GUARDRAIL = (
 )
 
 
+def _get_client() -> AsyncOpenAI:
+    global _client, _http_client
+    if _client is None:
+        _http_client = httpx.AsyncClient(timeout=60.0)
+        _client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            http_client=_http_client,
+            max_retries=0,
+        )
+    return _client
+
+
 async def _chat_json(model: str, system: str, user: str, max_tokens: int = 2000) -> dict:
-    resp = await _client.chat.completions.create(
+    resp = await _get_client().chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": f"{SCOPE_GUARDRAIL}\n\n{system}"},
@@ -270,7 +284,7 @@ async def generate_report_feedback(stats: dict) -> str:
 #    plain chat-completions models not having live internet access.
 # ---------------------------------------------------------------------------
 async def research_todays_current_affairs(date_str: str, count: int = 10) -> list[dict]:
-    resp = await _client.responses.create(
+    resp = await _get_client().responses.create(
         model=settings.MODEL_SEARCH,
         tools=[{"type": "web_search"}],
         input=(
