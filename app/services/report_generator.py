@@ -113,7 +113,9 @@ async def build_report_for_student(
 async def _compute_stats(conn: asyncpg.Connection, student_id, report_date: date) -> dict:
     row = await conn.fetchrow(
         """
-        select count(*) as total, count(*) filter (where is_correct) as correct
+        select count(*) as total,
+               count(*) filter (where is_correct) as correct,
+               bool_or(content_changed) as content_changed
         from student_attempts
         where student_id=$1
           and (created_at at time zone 'Asia/Kolkata')::date=$2
@@ -126,12 +128,15 @@ async def _compute_stats(conn: asyncpg.Connection, student_id, report_date: date
 
     subject_rows = await conn.fetch(
         """
-        select unnest(t.subject_tags) as subject,
+        select subject,
                count(*) as total,
                count(*) filter (where a.is_correct) as correct
         from student_attempts a
-        join ca_questions q on q.id = a.question_id
-        join ca_topics t on t.id = q.topic_id
+        left join ca_questions q on q.id = a.question_id
+        left join ca_topics t on t.id = q.topic_id
+        cross join lateral unnest(
+          coalesce(t.subject_tags, a.subject_tags_snapshot, '{}'::text[])
+        ) as subjects(subject)
         where a.student_id=$1
           and (a.created_at at time zone 'Asia/Kolkata')::date=$2
           and a.attempt_number=1
@@ -143,26 +148,29 @@ async def _compute_stats(conn: asyncpg.Connection, student_id, report_date: date
 
     concept_rows = await conn.fetch(
         """
-        select t.id as topic_id, t.title as concept,
+        select t.id as topic_id,
+               coalesce(t.title, a.topic_title_snapshot, 'Updated question set') as concept,
                count(*) as total,
-               count(*) filter (where a.is_correct) as correct
+               count(*) filter (where a.is_correct) as correct,
+               bool_or(a.content_changed) as content_changed
         from student_attempts a
-        join ca_questions q on q.id = a.question_id
-        join ca_topics t on t.id = q.topic_id
+        left join ca_questions q on q.id = a.question_id
+        left join ca_topics t on t.id = q.topic_id
         where a.student_id=$1
           and (a.created_at at time zone 'Asia/Kolkata')::date=$2
           and a.attempt_number=1
-        group by t.id, t.title
-        order by t.title
+        group by t.id, coalesce(t.title, a.topic_title_snapshot, 'Updated question set')
+        order by concept
         """,
         student_id, report_date,
     )
     concept_breakdown = {
         r["concept"]: {
-            "topic_id": str(r["topic_id"]),
+            "topic_id": str(r["topic_id"]) if r["topic_id"] is not None else None,
             "total": r["total"],
             "correct": r["correct"],
             "accuracy": round(100.0 * r["correct"] / r["total"], 1) if r["total"] else 0.0,
+            "content_changed": bool(r["content_changed"]),
         }
         for r in concept_rows
     }
@@ -174,6 +182,12 @@ async def _compute_stats(conn: asyncpg.Connection, student_id, report_date: date
         "subject_breakdown": subject_breakdown,
         "concept_breakdown": concept_breakdown,
         "practice_recommendations": _practice_recommendations(concept_breakdown),
+        "content_changed": bool(row["content_changed"]),
+        "content_change_notice": (
+            "Some questions in this history were upgraded. Your original scores and marks are preserved."
+            if row["content_changed"]
+            else None
+        ),
     }
 
 
@@ -219,6 +233,8 @@ def _practice_recommendations(concept_breakdown: dict) -> list[dict]:
     )
     recommendations = []
     for concept, performance in ranked:
+        if not performance.get("topic_id"):
+            continue
         accuracy = performance["accuracy"]
         if accuracy < 50:
             reason = "Rebuild the core idea, then attempt this question again."

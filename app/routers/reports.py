@@ -78,4 +78,6 @@ async def _get_report_for_student(student_id: str, report_date: date | None):
         exam_wise_readiness=row["exam_wise_readiness"], ai_feedback=row["ai_feedback"],
         concept_breakdown=(live_report or {}).get("concept_breakdown", {}),
         practice_recommendations=(live_report or {}).get("practice_recommendations", []),
+        content_changed=(live_report or {}).get("content_changed", False),
+        content_change_notice=(live_report or {}).get("content_change_notice"),
     )

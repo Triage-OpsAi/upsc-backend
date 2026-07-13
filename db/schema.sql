@@ -157,11 +157,17 @@ create index if not exists idx_slides_question on breakdown_slides (question_id)
 create table if not exists student_attempts (
   id                     uuid primary key default gen_random_uuid(),
   student_id             uuid not null references students(id) on delete cascade,
-  question_id            uuid not null references ca_questions(id) on delete cascade,
+  question_id            uuid references ca_questions(id) on delete set null,
   selected_option        text not null,
   is_correct             boolean not null,
   attempt_number         int not null default 1,
   went_through_breakdown boolean default false,
+  question_text_snapshot text,
+  topic_title_snapshot   text,
+  subject_tags_snapshot  text[] not null default '{}',
+  content_changed        boolean not null default false,
+  content_changed_at     timestamptz,
+  content_change_notice  text,
   created_at             timestamptz default now()
 );
 create index if not exists idx_attempts_student on student_attempts (student_id, created_at desc);
@@ -173,9 +179,13 @@ create index if not exists idx_attempts_question on student_attempts (question_i
 create table if not exists student_breakdown_answers (
   id              uuid primary key default gen_random_uuid(),
   student_id      uuid not null references students(id) on delete cascade,
-  slide_id        uuid not null references breakdown_slides(id) on delete cascade,
+  slide_id        uuid references breakdown_slides(id) on delete set null,
   selected_option text not null,
   is_correct      boolean not null,
+  practice_question_snapshot text,
+  subject_snapshot text,
+  content_changed boolean not null default false,
+  content_changed_at timestamptz,
   created_at      timestamptz default now()
 );
 create index if not exists idx_breakdown_answers_student on student_breakdown_answers (student_id);

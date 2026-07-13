@@ -154,6 +154,8 @@ class DailyReportOut(BaseModel):
     practice_recommendations: list[dict[str, Any]] = Field(default_factory=list)
     exam_wise_readiness: dict[str, Any]
     ai_feedback: Optional[str]
+    content_changed: bool = False
+    content_change_notice: Optional[str] = None
 
 
 class DashboardStatsOut(BaseModel):

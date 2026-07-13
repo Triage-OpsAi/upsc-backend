@@ -23,7 +23,7 @@ class Settings:
     MODEL_CHEAP: str = os.environ.get("MODEL_CHEAP", "gpt-4o-mini")
     # Model used only by the daily 1am cron to research "what happened today"
     # Needs browsing/tool support - falls back to MODEL_MAIN if unset.
-    MODEL_SEARCH: str = os.environ.get("MODEL_SEARCH", "gpt-4.1-mini")
+    MODEL_SEARCH: str = os.environ.get("MODEL_SEARCH", "gpt-5.4-mini")
 
     # --- connection pooling (tuned for Supabase free tier: 60 max conns) -
     # Use the Supabase *pooler* connection string (port 6543, pgbouncer,

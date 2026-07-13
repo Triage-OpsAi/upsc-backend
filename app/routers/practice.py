@@ -60,7 +60,16 @@ async def submit_attempt_authenticated(
     if body.student_id != current.student_id:
         raise HTTPException(403, "Cannot submit attempts for another account")
     async with acquire() as conn:
-        q = await conn.fetchrow("select correct_option, explanation from ca_questions where id=$1", body.question_id)
+        q = await conn.fetchrow(
+            """
+            select q.correct_option, q.explanation, q.question_text,
+                   t.title as topic_title, t.subject_tags
+            from ca_questions q
+            join ca_topics t on t.id = q.topic_id
+            where q.id=$1
+            """,
+            body.question_id,
+        )
         if q is None:
             raise HTTPException(404, "Question not found")
         is_correct = body.selected_option.strip().upper() == q["correct_option"].strip().upper()
@@ -68,11 +77,14 @@ async def submit_attempt_authenticated(
         await conn.execute(
             """
             insert into student_attempts
-              (student_id, question_id, selected_option, is_correct, attempt_number, went_through_breakdown)
-            values ($1,$2,$3,$4,$5,$6)
+              (student_id, question_id, selected_option, is_correct, attempt_number,
+               went_through_breakdown, question_text_snapshot, topic_title_snapshot,
+               subject_tags_snapshot)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
             """,
             current.student_id, body.question_id, body.selected_option, is_correct,
-            body.attempt_number, body.went_through_breakdown,
+            body.attempt_number, body.went_through_breakdown, q["question_text"],
+            q["topic_title"], q["subject_tags"],
         )
 
         breakdown_available = False
@@ -127,7 +139,11 @@ async def submit_breakdown_answer_authenticated(
         raise HTTPException(403, "Cannot submit breakdown answers for another account")
     async with acquire() as conn:
         slide = await conn.fetchrow(
-            "select practice_correct_option, practice_explanation from breakdown_slides where id=$1",
+            """
+            select practice_correct_option, practice_explanation,
+                   practice_question, subject
+            from breakdown_slides where id=$1
+            """,
             body.slide_id,
         )
         if slide is None or slide["practice_correct_option"] is None:
@@ -135,10 +151,13 @@ async def submit_breakdown_answer_authenticated(
         is_correct = body.selected_option.strip().upper() == slide["practice_correct_option"].strip().upper()
         await conn.execute(
             """
-            insert into student_breakdown_answers (student_id, slide_id, selected_option, is_correct)
-            values ($1,$2,$3,$4)
+            insert into student_breakdown_answers
+              (student_id, slide_id, selected_option, is_correct,
+               practice_question_snapshot, subject_snapshot)
+            values ($1,$2,$3,$4,$5,$6)
             """,
             current.student_id, body.slide_id, body.selected_option, is_correct,
+            slide["practice_question"], slide["subject"],
         )
     return BreakdownAnswerResult(
         is_correct=is_correct,

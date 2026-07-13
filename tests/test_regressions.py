@@ -159,6 +159,19 @@ class ReportRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["topic_id"] for item in recommendations], ["topic-2", "topic-1"])
         self.assertIn("core idea", recommendations[0]["reason"])
 
+    def test_archived_concepts_keep_scores_without_dead_practice_links(self):
+        recommendations = _practice_recommendations({
+            "Updated historical question": {
+                "topic_id": None, "total": 1, "correct": 0, "accuracy": 0.0,
+                "content_changed": True,
+            },
+            "Live concept": {
+                "topic_id": "topic-live", "total": 1, "correct": 0, "accuracy": 0.0,
+            },
+        })
+
+        self.assertEqual([item["topic_id"] for item in recommendations], ["topic-live"])
+
 
 if __name__ == "__main__":
     unittest.main()
