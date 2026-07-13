@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from app.database import acquire
 from app.schemas import ArchiveMonthOut, TopicListOut, TopicOut, PageMeta, NextTopicOut
 from app.config import get_settings
 from app.rate_limit import limiter
+from app.security import AuthContext
+from app.subscriptions import require_content_access
 
 router = APIRouter(prefix="/api/current-affairs", tags=["current-affairs"])
 settings = get_settings()
@@ -16,6 +18,7 @@ async def list_topics(
     year: int | None = Query(None, ge=2025),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=settings.MAX_PAGE_SIZE),
+    current: AuthContext = Depends(require_content_access),
 ):
     """Month-wise, paginated (max 10/page) list of published current-affairs topics."""
     where = [
@@ -75,7 +78,10 @@ async def list_topics(
 
 @router.get("/months", response_model=list[ArchiveMonthOut])
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
-async def available_months(request: Request):
+async def available_months(
+    request: Request,
+    current: AuthContext = Depends(require_content_access),
+):
     """Return one archive filter option per month that has practice questions."""
     async with acquire() as conn:
         rows = await conn.fetch(
@@ -100,7 +106,10 @@ async def available_months(request: Request):
 
 @router.get("/practice/latest", response_model=NextTopicOut)
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
-async def latest_practice_topic(request: Request):
+async def latest_practice_topic(
+    request: Request,
+    current: AuthContext = Depends(require_content_access),
+):
     """Return the newest topic only when it has an actual practice question."""
     async with acquire() as conn:
         row = await conn.fetchrow(
@@ -137,7 +146,11 @@ async def latest_practice_topic(request: Request):
 
 @router.get("/{topic_id}/next", response_model=NextTopicOut)
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
-async def next_topic(request: Request, topic_id: str):
+async def next_topic(
+    request: Request,
+    topic_id: str,
+    current: AuthContext = Depends(require_content_access),
+):
     """Return the next published topic in the same order used by archive/dashboard."""
     async with acquire() as conn:
         row = await conn.fetchrow(

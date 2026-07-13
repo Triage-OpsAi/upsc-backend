@@ -32,8 +32,17 @@ alter table students add column if not exists suspended_until timestamptz;
 alter table students add column if not exists suspension_reason text;
 alter table students add column if not exists active_device_id text;
 alter table students add column if not exists last_login_at timestamptz;
+create sequence if not exists early_access_offer_number_seq;
+alter table students add column if not exists trial_started_at timestamptz not null default now();
+alter table students add column if not exists trial_ends_at timestamptz not null default (now() + interval '7 days');
+alter table students add column if not exists subscription_status text not null default 'trial';
+alter table students add column if not exists subscription_started_at timestamptz;
+alter table students add column if not exists early_offer_number bigint default nextval('early_access_offer_number_seq');
+alter table students add column if not exists early_offer_claimed_at timestamptz;
 create index if not exists idx_students_email on students (email);
 create index if not exists idx_students_active_device on students (active_device_id);
+create index if not exists idx_students_trial_ends on students (trial_ends_at);
+create unique index if not exists idx_students_early_offer_number on students (early_offer_number) where early_offer_number is not null;
 
 -- ----------------------------------------------------------------------------
 -- Email OTP + JWT session auth. One account keeps only one active session.

@@ -65,6 +65,22 @@ class StudentOut(BaseModel):
     recent_device_count: int = 0
     device_limit: int = 2
     device_warning: Optional[str] = None
+    subscription_status: str = "trial"
+    has_content_access: bool = True
+    trial_ends_at: Optional[datetime] = None
+    trial_days_remaining: int = 7
+    early_offer_eligible: bool = False
+    early_offer_number: Optional[int] = None
+    monthly_price_inr: int = 299
+    standard_monthly_price_inr: int = 299
+
+
+class OfferSummaryOut(BaseModel):
+    trial_days: int = 7
+    standard_monthly_price_inr: int = 299
+    early_monthly_price_inr: int = 99
+    early_offer_limit: int = 500
+    spots_remaining: int
 
 
 class OtpRequest(BaseModel):

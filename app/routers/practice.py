@@ -6,7 +6,8 @@ from app.schemas import (
 )
 from app.config import get_settings
 from app.rate_limit import limiter
-from app.security import AuthContext, require_current_user
+from app.security import AuthContext
+from app.subscriptions import STANDARD_MONTHLY_PRICE_INR, access_state_from_row, require_content_access
 
 router = APIRouter(prefix="/api", tags=["practice"])
 settings = get_settings()
@@ -17,25 +18,46 @@ settings = get_settings()
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def get_or_create_student(request: Request, body: StudentCreate):
     async with acquire() as conn:
-        row = await conn.fetchrow("select id, device_id, name, target_exam from students where device_id=$1", body.device_id)
+        row = await conn.fetchrow(
+            """
+            select id, device_id, name, email, target_exam, trial_ends_at,
+                   subscription_status, early_offer_number
+            from students where device_id=$1
+            """,
+            body.device_id,
+        )
         if row is None:
             row = await conn.fetchrow(
                 """
                 insert into students (device_id, name, email, target_exam)
                 values ($1,$2,$3,$4)
-                returning id, device_id, name, target_exam
+                returning id, device_id, name, email, target_exam, trial_ends_at,
+                          subscription_status, early_offer_number
                 """,
                 body.device_id, body.name, body.email, body.target_exam or "UPSC",
             )
         else:
             await conn.execute("update students set last_active_at=now() where id=$1", row["id"])
-    return StudentOut(id=str(row["id"]), device_id=row["device_id"], name=row["name"], target_exam=row["target_exam"])
+    access = access_state_from_row(row)
+    return StudentOut(
+        id=str(row["id"]), device_id=row["device_id"], name=row["name"],
+        email=row["email"], target_exam=row["target_exam"],
+        subscription_status=access.status, has_content_access=access.has_content_access,
+        trial_ends_at=access.trial_ends_at, trial_days_remaining=access.trial_days_remaining,
+        early_offer_eligible=access.early_offer_eligible, early_offer_number=access.early_offer_number,
+        monthly_price_inr=access.monthly_price_inr,
+        standard_monthly_price_inr=STANDARD_MONTHLY_PRICE_INR,
+    )
 
 
 # ---------------------------------------------------------------------------
 @router.get("/questions/topic/{topic_id}", response_model=QuestionOut)
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
-async def get_question_for_topic(request: Request, topic_id: str):
+async def get_question_for_topic(
+    request: Request,
+    topic_id: str,
+    current: AuthContext = Depends(require_content_access),
+):
     async with acquire() as conn:
         row = await conn.fetchrow(
             "select id, topic_id, question_text, options, difficulty from ca_questions where topic_id=$1 limit 1",
@@ -55,7 +77,7 @@ async def get_question_for_topic(request: Request, topic_id: str):
 async def submit_attempt_authenticated(
     request: Request,
     body: AttemptCreate,
-    current: AuthContext = Depends(require_current_user),
+    current: AuthContext = Depends(require_content_access),
 ):
     if body.student_id != current.student_id:
         raise HTTPException(403, "Cannot submit attempts for another account")
@@ -103,7 +125,11 @@ async def submit_attempt_authenticated(
 # ---------------------------------------------------------------------------
 @router.get("/breakdown/{question_id}", response_model=list[BreakdownSlideOut])
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
-async def get_breakdown(request: Request, question_id: str):
+async def get_breakdown(
+    request: Request,
+    question_id: str,
+    current: AuthContext = Depends(require_content_access),
+):
     async with acquire() as conn:
         rows = await conn.fetch(
             """
@@ -133,7 +159,7 @@ async def get_breakdown(request: Request, question_id: str):
 async def submit_breakdown_answer_authenticated(
     request: Request,
     body: BreakdownAnswerCreate,
-    current: AuthContext = Depends(require_current_user),
+    current: AuthContext = Depends(require_content_access),
 ):
     if body.student_id != current.student_id:
         raise HTTPException(403, "Cannot submit breakdown answers for another account")

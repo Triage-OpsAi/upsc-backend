@@ -21,6 +21,7 @@ from app.security import (
     require_current_user,
     verify_otp,
 )
+from app.subscriptions import STANDARD_MONTHLY_PRICE_INR, access_state_from_row
 
 router = APIRouter(prefix="/api", tags=["auth"])
 settings = get_settings()
@@ -211,7 +212,8 @@ async def verify_otp_login(request: Request, body: OtpVerify):
             student = await conn.fetchrow(
                 """
                 select id, device_id, name, email, target_exam, avatar_url, bio, city,
-                       suspended_until, active_device_id
+                       suspended_until, active_device_id, trial_ends_at,
+                       subscription_status, early_offer_number
                 from students
                 where email=$1
                 """,
@@ -221,7 +223,8 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                 student = await conn.fetchrow(
                     """
                     select id, device_id, name, email, target_exam, avatar_url, bio, city,
-                           suspended_until, active_device_id
+                           suspended_until, active_device_id, trial_ends_at,
+                           subscription_status, early_offer_number
                     from students
                     where device_id=$1 and email is null
                     """,
@@ -234,7 +237,8 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                           (device_id, active_device_id, name, email, target_exam, email_verified_at, last_login_at)
                         values ($1,$1,$2,$3,$4,now(),now())
                         returning id, device_id, name, email, target_exam, avatar_url, bio, city,
-                                  suspended_until, active_device_id
+                                  suspended_until, active_device_id, trial_ends_at,
+                                  subscription_status, early_offer_number
                         """,
                         device_id,
                         body.name,
@@ -249,7 +253,8 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                             active_device_id=$1, email_verified_at=now(), last_login_at=now()
                         where id=$5
                         returning id, device_id, name, email, target_exam, avatar_url, bio, city,
-                                  suspended_until, active_device_id
+                                  suspended_until, active_device_id, trial_ends_at,
+                                  subscription_status, early_offer_number
                         """,
                         device_id,
                         email,
@@ -272,7 +277,8 @@ async def verify_otp_login(request: Request, body: OtpVerify):
                             email_verified_at=coalesce(email_verified_at, now()), last_login_at=now()
                         where id=$1
                         returning id, device_id, name, email, target_exam, avatar_url, bio, city,
-                                  suspended_until, active_device_id
+                                  suspended_until, active_device_id, trial_ends_at,
+                                  subscription_status, early_offer_number
                         """,
                         student["id"],
                         body.name,
@@ -433,7 +439,10 @@ async def verify_otp_login(request: Request, body: OtpVerify):
             try_send_email,
             email,
             "Welcome to The Current Affairs Gazette",
-            "Your account has been created. Your login session is valid for up to 30 days on this device.",
+            (
+                "Your account has been created with a 7-day free trial. "
+                "Your login session is valid for up to 30 days on this device."
+            ),
         )
     elif switched_device:
         await asyncio.to_thread(
@@ -470,7 +479,9 @@ async def me(current: AuthContext = Depends(require_current_user)):
     async with acquire() as conn:
         student = await conn.fetchrow(
             """
-            select id, device_id, name, email, target_exam, avatar_url, bio, city, suspended_until, active_device_id
+            select id, device_id, name, email, target_exam, avatar_url, bio, city,
+                   suspended_until, active_device_id, trial_ends_at,
+                   subscription_status, early_offer_number
             from students
             where id=$1
             """,
@@ -499,7 +510,9 @@ async def update_profile(body: ProfileUpdate, current: AuthContext = Depends(req
                 end,
                 last_active_at=now()
             where id=$1
-            returning id, device_id, name, email, target_exam, avatar_url, bio, city, suspended_until, active_device_id
+            returning id, device_id, name, email, target_exam, avatar_url, bio, city,
+                      suspended_until, active_device_id, trial_ends_at,
+                      subscription_status, early_offer_number
             """,
             current.student_id,
             body.name,
@@ -542,6 +555,7 @@ def _student_out(
     active_device_id: str | None = None,
     recent_device_count: int = 0,
 ) -> StudentOut:
+    access = access_state_from_row(row)
     return StudentOut(
         id=str(row["id"]),
         device_id=active_device_id or row["active_device_id"] or row["device_id"],
@@ -555,4 +569,12 @@ def _student_out(
         recent_device_count=recent_device_count,
         device_limit=settings.DEVICE_LIMIT_BEFORE_SUSPENSION,
         device_warning=_device_warning(recent_device_count),
+        subscription_status=access.status,
+        has_content_access=access.has_content_access,
+        trial_ends_at=access.trial_ends_at,
+        trial_days_remaining=access.trial_days_remaining,
+        early_offer_eligible=access.early_offer_eligible,
+        early_offer_number=access.early_offer_number,
+        monthly_price_inr=access.monthly_price_inr,
+        standard_monthly_price_inr=STANDARD_MONTHLY_PRICE_INR,
     )
