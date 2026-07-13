@@ -66,6 +66,14 @@ def test_explanation_must_name_the_exact_corrected_detail():
         _validate_question_payload(question, "statement", 0)
 
 
+def test_numbered_statements_must_be_on_separate_lines():
+    question = _valid_question()
+    question["question_text"] = question["question_text"].replace("\n", " ")
+
+    with pytest.raises(ValueError, match="separate lines"):
+        _validate_question_payload(question, "statement", 0)
+
+
 def test_topic_sources_require_at_least_one_url():
     _validate_topic_sources([{"source_urls": ["https://example.gov.in/source"]}])
 

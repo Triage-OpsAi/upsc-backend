@@ -86,8 +86,11 @@ Use the selected archetype as follows:
 
 The archetype must be visible in `question_text`, not merely asserted in the
 `format` field or topic title. Label every numbered statement or pair exactly
-`1.`, `2.`, `3.` (and `4.` if used). A `statement` question must put all 3-4
-numbered statements in the stem and use combination answers. A `negative` question must
+`1.`, `2.`, `3.` (and `4.` if used). EVERY numbered statement or pair must
+start on its own new line; never serialize `1. ... 2. ... 3. ...` into one
+paragraph. Put Assertion (A) and Reason (R) on separate lines as well. A
+`statement` question must put all 3-4 numbered statements in the stem and use
+combination answers. A `negative` question must
 put numbered statements or pairs in the stem and ask what/how many is NOT
 correct; do not disguise an ordinary one-correct-answer MCQ by merely adding
 "NOT". A `matching` question must put every numbered match in the stem and use
@@ -279,20 +282,27 @@ def _validate_question_payload(question: dict, question_format: str, index: int)
 
     lowered = question_text.casefold()
     numbered_items = sum(marker in question_text for marker in ("1.", "2.", "3.", "4."))
+    numbered_line_items = len(re.findall(r"(?m)^\s*[1-4][.)]\s+", question_text))
     if question_format != "matching" and re.search(r"(?:^|\n)\s*[ABCD][).]\s", question_text):
         raise ValueError(f"{prefix} repeats answer choices inside question_text")
     if question_format == "assertion_reason":
         if "assertion (a)" not in lowered or "reason (r)" not in lowered:
             raise ValueError(f"{prefix} does not contain labelled Assertion and Reason text")
+        if not re.search(r"(?mi)^\s*assertion \(a\)\s*:", question_text) or not re.search(
+            r"(?mi)^\s*reason \(r\)\s*:", question_text
+        ):
+            raise ValueError(f"{prefix} must put Assertion and Reason on separate lines")
         if correct_option == "A":
             raise ValueError(f"{prefix} Assertion-Reason answer must contain a non-trivial trap")
     elif question_format == "negative":
-        if "not" not in lowered or numbered_items < 3:
+        if "not" not in lowered or numbered_items < 3 or numbered_line_items < 3:
             raise ValueError(f"{prefix} is not a numbered negative-framing question")
         if "all statements are correct" in str(options[correct_option_index]["text"]).casefold():
             raise ValueError(f"{prefix} negative question has no false component")
-    elif question_format in {"statement", "matching"} and numbered_items < 3:
-        raise ValueError(f"{prefix} does not contain at least three numbered items")
+    elif question_format in {"statement", "matching"} and (
+        numbered_items < 3 or numbered_line_items < 3
+    ):
+        raise ValueError(f"{prefix} must put at least three numbered items on separate lines")
     if question_format == "matching" and "how many" not in lowered:
         raise ValueError(f"{prefix} matching stem must ask how many pairs")
     correct_text = str(options[correct_option_index]["text"]).casefold()
