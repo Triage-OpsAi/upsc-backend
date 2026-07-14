@@ -1117,6 +1117,21 @@ def _subject_chapter_scope(subject: str, chapter: str) -> str:
     )
 
 
+def _subject_chapter_coverage(subject: str, chapter: str) -> list[str]:
+    if subject.casefold() == "polity" and chapter.casefold() == "constitutional framework":
+        return [
+            "Constituent Assembly demand, Cabinet Mission basis, composition, election, and representation",
+            "Constituent Assembly office-holders, major committees, Drafting Committee, and constitutional advisers",
+            "Objectives Resolution and the making, adoption, signing, commencement, and original calligraphy of the Constitution",
+            "Sources of constitutional provisions and the borrowed features adapted from other systems",
+            "Preamble text, ideals, key expressions, legal status, amendment, and Supreme Court interpretation",
+            "Salient structural features including written length, blend of rigidity and flexibility, parliamentary government, federal-unitary balance, and independent institutions",
+            "Citizenship at commencement under Articles 5 to 11, including migration and overseas Indian domicile rules",
+            "Union and its territory under Articles 1 to 4, admission or establishment of states, boundary/name changes, and First/Fourth Schedule consequences",
+        ]
+    return [f"All standard concepts ordinarily included in {subject}: {chapter}"]
+
+
 async def generate_subject_questions(
     subject: str,
     chapter: str,
@@ -1228,27 +1243,39 @@ async def _generate_subject_batch(
             "subject": subject,
             "chapter": chapter,
             "chapter_scope": _subject_chapter_scope(subject, chapter),
+            "chapter_coverage_requirements": _subject_chapter_coverage(subject, chapter),
             "count": count,
             "batch_number": batch_number,
             "question_format_plan": format_plan,
             "correct_option_plan": answer_key_plan,
             "avoid_testing_the_same_specific_fact_as": recent_existing,
+            "coverage_instruction": (
+                "Distribute this batch across the least represented coverage requirements, "
+                "using the existing questions to identify concepts already tested. Across "
+                "successive batches, every coverage requirement must receive meaningful, "
+                "non-duplicative question coverage."
+            ),
         }
     )
     retry_delays = [1, 3, 8]
     last_error: Exception | None = None
     for attempt in range(len(retry_delays) + 1):
         try:
-            data = await _chat_json(settings.MODEL_MAIN, system, user, max_tokens=16000)
+            data = await _chat_json(
+                settings.MODEL_CHEAP,
+                system,
+                user,
+                max_tokens=max(3600, count * 1800),
+            )
             if not isinstance(data, dict):
                 raise ValueError("static generation JSON root was not an object")
             raw_questions = data.get("questions", [])
             if not isinstance(raw_questions, list):
                 raise ValueError("static questions payload was not a list")
 
-            valid: list[dict] = []
-            statement_signatures: set[str] = set()
-            for index, question in enumerate(raw_questions[:count]):
+            verification_semaphore = asyncio.Semaphore(5)
+
+            async def validate_candidate(index: int, question: dict):
                 try:
                     _validate_subject_question(
                         question,
@@ -1258,11 +1285,12 @@ async def _generate_subject_batch(
                         require_sources=False,
                     )
                     _validate_subject_chapter_scope(question, subject, chapter, index)
-                    verification_sources = await _verify_subject_question(
-                        question,
-                        subject,
-                        chapter,
-                    )
+                    async with verification_semaphore:
+                        verification_sources = await _verify_subject_question(
+                            question,
+                            subject,
+                            chapter,
+                        )
                     question["verification_sources"] = verification_sources
                     _validate_subject_question(
                         question,
@@ -1271,17 +1299,6 @@ async def _generate_subject_batch(
                         index,
                         require_sources=True,
                     )
-                    if format_plan[index] == "statement":
-                        correct_index = ord(answer_key_plan[index]) - ord("A")
-                        signature = _statement_answer_signature(
-                            str(question["options"][correct_index]["text"])
-                        )
-                        if signature and signature in statement_signatures:
-                            raise ValueError(
-                                f"subject question {index + 1} repeats statement answer {signature}"
-                            )
-                        if signature:
-                            statement_signatures.add(signature)
                 except (OpenAIError, TypeError, ValueError, IndexError) as exc:
                     logger.warning(
                         "Skipping invalid static question %s in %s / %s batch %s: %s",
@@ -1291,7 +1308,33 @@ async def _generate_subject_batch(
                         batch_number,
                         exc,
                     )
+                    return None
+                return index, question
+
+            candidates = await asyncio.gather(*(
+                validate_candidate(index, question)
+                for index, question in enumerate(raw_questions[:count])
+            ))
+            valid: list[dict] = []
+            statement_signatures: set[str] = set()
+            for candidate in candidates:
+                if candidate is None:
                     continue
+                index, question = candidate
+                if format_plan[index] == "statement":
+                    correct_index = ord(answer_key_plan[index]) - ord("A")
+                    signature = _statement_answer_signature(
+                        str(question["options"][correct_index]["text"])
+                    )
+                    if signature and signature in statement_signatures:
+                        logger.warning(
+                            "Skipping subject question %s because statement answer %s repeats in batch",
+                            index + 1,
+                            signature,
+                        )
+                        continue
+                    if signature:
+                        statement_signatures.add(signature)
                 valid.append(question)
             if not valid:
                 raise ValueError("static batch contained no individually valid questions")

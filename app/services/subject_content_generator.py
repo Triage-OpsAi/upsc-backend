@@ -6,7 +6,7 @@ import logging
 import asyncpg
 
 logger = logging.getLogger(__name__)
-BREAKDOWN_CONCURRENCY = 3
+BREAKDOWN_CONCURRENCY = 5
 
 
 async def store_subject_chapter_questions(

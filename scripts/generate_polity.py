@@ -9,7 +9,9 @@ from app.services.subject_content_generator import store_subject_chapter_questio
 
 DEFAULT_CHAPTER = "Constitutional Framework"
 DEFAULT_TARGET = 200
-BATCH_SIZE = 15
+# Keep batches small so verified questions and their breakdowns are committed
+# regularly during long, resumable generation runs.
+BATCH_SIZE = 5
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 

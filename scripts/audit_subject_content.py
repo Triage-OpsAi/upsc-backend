@@ -37,7 +37,26 @@ async def main(subject: str, chapter: str, sample_size: int) -> None:
                 select count(*)
                 from subject_questions q
                 where q.chapter_id=$1
-                  and (select count(*) from subject_breakdown_slides s where s.question_id=q.id) <> 4
+                  and (
+                    (select count(*) from subject_breakdown_slides s where s.question_id=q.id) <> 4
+                    or (select count(*) from subject_breakdown_slides s where s.question_id=q.id and s.slide_type='theory') <> 2
+                    or (select count(*) from subject_breakdown_slides s where s.question_id=q.id and s.slide_type='practice') <> 2
+                  )
+                """,
+                chapter_id,
+            )
+            invalid_practice = await conn.fetchval(
+                """
+                select count(*)
+                from subject_breakdown_slides s
+                join subject_questions q on q.id=s.question_id
+                where q.chapter_id=$1 and s.slide_type='practice'
+                  and (
+                    s.practice_question is null
+                    or jsonb_typeof(s.practice_options) <> 'array'
+                    or jsonb_array_length(s.practice_options) <> 4
+                    or s.practice_correct_option not in ('A','B','C','D')
+                  )
                 """,
                 chapter_id,
             )
@@ -54,7 +73,8 @@ async def main(subject: str, chapter: str, sample_size: int) -> None:
             )
         print(f"{chapter}: {total} questions")
         print("Formats: " + ", ".join(f"{row['format']}={row['count']}" for row in formats))
-        print(f"Questions without exactly 4 slides: {incomplete}")
+        print(f"Questions without exactly 2 theory + 2 practice slides: {incomplete}")
+        print(f"Practice slides without four A-D options: {invalid_practice}")
         for index, row in enumerate(samples, 1):
             correct_text = next(
                 (option["text"] for option in row["options"] if option.get("key") == row["correct_option"]),
