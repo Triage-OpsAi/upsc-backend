@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from app.config import get_settings
 from app.rate_limit import limiter
 from app.database import DatabaseUnavailable, get_pool, close_pool
-from app.routers import auth, current_affairs, dashboard, practice, reports, cron, subscriptions
+from app.routers import auth, current_affairs, dashboard, practice, reports, cron, subjects, subscriptions
 
 settings = get_settings()
 
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 
 app.include_router(current_affairs.router)
+app.include_router(subjects.router)
 app.include_router(auth.router)
 app.include_router(subscriptions.router)
 app.include_router(dashboard.router)

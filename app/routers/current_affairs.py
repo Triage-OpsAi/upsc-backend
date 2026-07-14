@@ -10,6 +10,12 @@ router = APIRouter(prefix="/api/current-affairs", tags=["current-affairs"])
 settings = get_settings()
 
 
+def _require_current_affairs_visible() -> None:
+    if not settings.is_subject_visible("current_affairs"):
+        from fastapi import HTTPException
+        raise HTTPException(404, "Subject not yet available")
+
+
 @router.get("", response_model=TopicListOut)
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def list_topics(
@@ -21,6 +27,7 @@ async def list_topics(
     current: AuthContext = Depends(require_content_access),
 ):
     """Month-wise, paginated (max 10/page) list of published current-affairs topics."""
+    _require_current_affairs_visible()
     where = [
         "t.status = 'published'",
         "exists (select 1 from ca_questions available_q where available_q.topic_id = t.id)",
@@ -83,6 +90,7 @@ async def available_months(
     current: AuthContext = Depends(require_content_access),
 ):
     """Return one archive filter option per month that has practice questions."""
+    _require_current_affairs_visible()
     async with acquire() as conn:
         rows = await conn.fetch(
             """
@@ -111,6 +119,7 @@ async def latest_practice_topic(
     current: AuthContext = Depends(require_content_access),
 ):
     """Return the newest topic only when it has an actual practice question."""
+    _require_current_affairs_visible()
     async with acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -152,6 +161,7 @@ async def next_topic(
     current: AuthContext = Depends(require_content_access),
 ):
     """Return the next published topic in the same order used by archive/dashboard."""
+    _require_current_affairs_visible()
     async with acquire() as conn:
         row = await conn.fetchrow(
             """

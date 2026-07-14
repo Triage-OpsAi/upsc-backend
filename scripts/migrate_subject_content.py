@@ -1,0 +1,26 @@
+"""Apply the idempotent static-subject content migration."""
+
+import asyncio
+from pathlib import Path
+
+from app.database import close_pool, get_pool
+
+
+async def main() -> None:
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "db"
+        / "migrations"
+        / "20260714_add_subject_content.sql"
+    ).read_text(encoding="utf-8")
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(migration)
+    finally:
+        await close_pool()
+    print("Static subject-content migration applied.", flush=True)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

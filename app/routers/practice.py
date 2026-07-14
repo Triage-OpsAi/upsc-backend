@@ -13,6 +13,11 @@ router = APIRouter(prefix="/api", tags=["practice"])
 settings = get_settings()
 
 
+def _require_current_affairs_visible() -> None:
+    if not settings.is_subject_visible("current_affairs"):
+        raise HTTPException(404, "Subject not yet available")
+
+
 # ---------------------------------------------------------------------------
 @router.post("/students", response_model=StudentOut)
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
@@ -58,6 +63,7 @@ async def get_question_for_topic(
     topic_id: str,
     current: AuthContext = Depends(require_content_access),
 ):
+    _require_current_affairs_visible()
     async with acquire() as conn:
         row = await conn.fetchrow(
             "select id, topic_id, question_text, options, difficulty from ca_questions where topic_id=$1 limit 1",
@@ -79,6 +85,7 @@ async def submit_attempt_authenticated(
     body: AttemptCreate,
     current: AuthContext = Depends(require_content_access),
 ):
+    _require_current_affairs_visible()
     if body.student_id != current.student_id:
         raise HTTPException(403, "Cannot submit attempts for another account")
     async with acquire() as conn:
@@ -130,6 +137,7 @@ async def get_breakdown(
     question_id: str,
     current: AuthContext = Depends(require_content_access),
 ):
+    _require_current_affairs_visible()
     async with acquire() as conn:
         rows = await conn.fetch(
             """
@@ -161,6 +169,7 @@ async def submit_breakdown_answer_authenticated(
     body: BreakdownAnswerCreate,
     current: AuthContext = Depends(require_content_access),
 ):
+    _require_current_affairs_visible()
     if body.student_id != current.student_id:
         raise HTTPException(403, "Cannot submit breakdown answers for another account")
     async with acquire() as conn:

@@ -12,6 +12,21 @@ def _bool_env(name: str, default: str = "false") -> bool:
 
 
 class Settings:
+    SUBJECTS: dict[str, dict[str, str]] = {
+        "current_affairs": {"name": "Current Affairs", "env": "SUBJECT_CURRENT_AFFAIRS_VISIBLE"},
+        "polity": {"name": "Polity", "env": "SUBJECT_POLITY_VISIBLE"},
+        "economy": {"name": "Economy", "env": "SUBJECT_ECONOMY_VISIBLE"},
+        "history": {"name": "History", "env": "SUBJECT_HISTORY_VISIBLE"},
+        "geography": {"name": "Geography", "env": "SUBJECT_GEOGRAPHY_VISIBLE"},
+        "environment": {"name": "Environment & Ecology", "env": "SUBJECT_ENVIRONMENT_VISIBLE"},
+        "science_tech": {"name": "Science & Technology", "env": "SUBJECT_SCIENCE_TECH_VISIBLE"},
+        "ethics": {"name": "Ethics", "env": "SUBJECT_ETHICS_VISIBLE"},
+        "international_relations": {
+            "name": "International Relations",
+            "env": "SUBJECT_INTERNATIONAL_RELATIONS_VISIBLE",
+        },
+    }
+
     # --- required secrets (from .env) -----------------------------------
     DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
     OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
@@ -24,6 +39,9 @@ class Settings:
     # Model used only by the daily 1am cron to research "what happened today"
     # Needs browsing/tool support - falls back to MODEL_MAIN if unset.
     MODEL_SEARCH: str = os.environ.get("MODEL_SEARCH", "gpt-5.4-mini")
+    OPENAI_REQUEST_TIMEOUT_SECONDS: float = float(
+        os.environ.get("OPENAI_REQUEST_TIMEOUT_SECONDS", "300")
+    )
 
     # --- connection pooling (tuned for Supabase free tier: 60 max conns) -
     # Use the Supabase *pooler* connection string (port 6543, pgbouncer,
@@ -88,6 +106,12 @@ class Settings:
 
     # --- allowed origins for CORS ---------------------------------------
     ALLOWED_ORIGINS: list = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+
+    def is_subject_visible(self, key: str) -> bool:
+        meta = self.SUBJECTS.get(key)
+        if not meta:
+            return False
+        return _bool_env(meta["env"], "false")
 
 
 @lru_cache

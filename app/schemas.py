@@ -45,6 +45,46 @@ class QuestionOut(BaseModel):
     # correct_option intentionally omitted - never send the answer to the client
 
 
+class SubjectOut(BaseModel):
+    key: str
+    name: str
+    visible: bool
+
+
+class ChapterOut(BaseModel):
+    id: str
+    subject_key: str
+    name: str
+    chapter_order: int
+    question_count: int = 0
+
+
+class SubjectQuestionOut(BaseModel):
+    id: str
+    chapter_id: str
+    question_text: str
+    options: list[dict]
+    difficulty: str
+    format: Optional[str] = None
+    # correct_option and explanation are intentionally withheld until grading.
+
+
+class SubjectQuestionListOut(BaseModel):
+    items: list[SubjectQuestionOut]
+    meta: PageMeta
+
+
+class SubjectBreakdownSlideOut(BaseModel):
+    id: str
+    slide_order: int
+    slide_type: str
+    concept: str
+    content: Optional[str] = None
+    practice_question: Optional[str] = None
+    practice_options: Optional[list[dict]] = None
+    # practice_correct_option is intentionally withheld until grading.
+
+
 class StudentCreate(BaseModel):
     device_id: str = Field(min_length=8, max_length=128)
     name: Optional[str] = None

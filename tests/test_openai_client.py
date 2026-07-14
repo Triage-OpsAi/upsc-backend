@@ -2,8 +2,12 @@ import pytest
 
 from app.openai_client import (
     _question_format_plan,
+    _subject_answer_key_plan,
+    _normalize_subject_breakdown_slides,
+    _is_near_duplicate,
     _validate_breakdown_slides,
     _validate_question_payload,
+    _validate_subject_question,
     _validate_topic_sources,
     validate_generated_topic,
 )
@@ -41,8 +45,74 @@ def test_format_plan_guarantees_all_archetypes_in_four_question_batch():
     assert set(plan) == {"statement", "assertion_reason", "negative", "matching"}
 
 
+def test_subject_answer_plan_varies_and_avoids_assertion_reason_a():
+    formats = ["statement", "assertion_reason", "negative", "matching"] * 3
+    plan = _subject_answer_key_plan(formats)
+
+    assert all(left != right for left, right in zip(plan, plan[1:]))
+    assert all(plan[index] in {"C", "D"} for index, value in enumerate(formats) if value == "assertion_reason")
+
+
+def test_subject_near_duplicate_rejects_same_fact_with_changed_wrong_date():
+    first = (
+        "Assertion (A): The Constitution came into effect on 26 January 1950.\n"
+        "Reason (R): It was adopted on 26 January 1950."
+    )
+    second = (
+        "Assertion (A): The Constitution came into effect on 26 January 1950.\n"
+        "Reason (R): It was adopted on 15 August 1947."
+    )
+
+    assert _is_near_duplicate(second, [first])
+
+
 def test_question_payload_accepts_audited_precision_details():
     _validate_question_payload(_valid_question(), "statement", 0)
+
+
+def test_subject_question_requires_exact_static_detail_and_one_detail_trap():
+    question = _valid_question()
+    question["format"] = "statement"
+    question.pop("cross_topic_link")
+    question["precision_trap"]["false_component"] = (
+        "The GST Council is constituted under Article 279."
+    )
+    question["precision_trap"]["false_component_id"] = "3"
+    question["answer_audit"] = {"component_truth": {"1": True, "2": True, "3": False}}
+    question["verification_sources"] = ["https://legislative.gov.in/constitution-of-india/"]
+    question["explanation"] += " Correct option is A: 1 and 2 only."
+
+    _validate_subject_question(question, "statement", "A", 0)
+
+    question["question_text"] = (
+        "Consider the following statements:\n"
+        "1. The Finance Commission is a constitutional body.\n"
+        "2. The Election Commission is a constitutional body.\n"
+        "3. The Finance Commission conducts elections."
+    )
+    question["precision_trap"] = {
+        "false_component": "The Finance Commission conducts elections.",
+        "wrong_detail": "Finance Commission",
+        "correct_detail": "Election Commission",
+    }
+    question["explanation"] = "Statement 3 is false: Election Commission is the corrected authority."
+    with pytest.raises(ValueError, match="exact static-syllabus detail"):
+        _validate_subject_question(question, "statement", "A", 0)
+
+
+def test_subject_statement_rejects_all_three_correct_pattern():
+    question = _valid_question()
+    question["format"] = "statement"
+    question["correct_option"] = "D"
+    question["precision_trap"]["false_component"] = (
+        "The GST Council is constituted under Article 279."
+    )
+    question["precision_trap"]["false_component_id"] = "3"
+    question["answer_audit"] = {"component_truth": {"1": True, "2": True, "3": False}}
+    question["verification_sources"] = ["https://legislative.gov.in/constitution-of-india/"]
+    question["explanation"] += " Correct option is D: 1, 2 and 3."
+    with pytest.raises(ValueError, match="forbidden 1, 2 and 3"):
+        _validate_subject_question(question, "statement", "D", 0)
 
 
 def test_storage_guard_rejects_legacy_question_shape():
@@ -110,3 +180,29 @@ def test_breakdown_requires_precision_hinge_and_valid_practice_options():
     slides[0]["content"] = "General overview only"
     with pytest.raises(ValueError, match="Precision hinge"):
         _validate_breakdown_slides(slides)
+
+
+def test_subject_breakdown_normalizes_equivalent_practice_json_shape():
+    slides = [
+        {"slide_order": 1, "slide_type": "theory", "concept": "Article 1", "content": "Precision hinge: Article 1, not Article 2."},
+        {"slide_order": 2, "slide_type": "theory", "concept": "Article 2", "content": "Exact distinction."},
+    ]
+    slides.extend({
+            "slide_order": order,
+            "slide_type": "practice",
+            "subject": f"Concept {order}",
+            "question": "Which statement is correct?",
+            "options": {"A": "One", "B": "Two", "C": "Three", "D": "Four"},
+            "correct_option": "B",
+            "explanation": "B is exact.",
+        }
+        for order in (3, 4)
+    )
+
+    normalized = _normalize_subject_breakdown_slides(slides)
+    assert normalized[2]["practice_options"] == [
+        {"key": "A", "text": "One"},
+        {"key": "B", "text": "Two"},
+        {"key": "C", "text": "Three"},
+        {"key": "D", "text": "Four"},
+    ]
