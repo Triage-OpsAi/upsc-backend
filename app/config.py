@@ -96,6 +96,27 @@ class Settings:
     SMTP_PASSWORD: str = os.environ.get("SMTP_PASSWORD", "")
     SMTP_FROM_EMAIL: str = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME)
     SMTP_USE_TLS: bool = _bool_env("SMTP_USE_TLS", "true")
+    SMTP_USE_SSL: bool = _bool_env("SMTP_USE_SSL", "false")
+    SMTP_TIMEOUT_SECONDS: float = float(os.environ.get("SMTP_TIMEOUT_SECONDS", "20"))
+    SMTP_RETRY_ATTEMPTS: int = max(1, int(os.environ.get("SMTP_RETRY_ATTEMPTS", "3")))
+    SMTP_RETRY_BASE_SECONDS: float = max(
+        0.0, float(os.environ.get("SMTP_RETRY_BASE_SECONDS", "1"))
+    )
+    SMTP_FROM_NAME: str = os.environ.get(
+        "SMTP_FROM_NAME", "AspirantOS"
+    )
+
+    # Optional independent provider used only after the primary transport
+    # exhausts its retries. Configure this for true provider redundancy.
+    SMTP_FALLBACK_HOST: str = os.environ.get("SMTP_FALLBACK_HOST", "")
+    SMTP_FALLBACK_PORT: int = int(os.environ.get("SMTP_FALLBACK_PORT", "587"))
+    SMTP_FALLBACK_USERNAME: str = os.environ.get("SMTP_FALLBACK_USERNAME", "")
+    SMTP_FALLBACK_PASSWORD: str = os.environ.get("SMTP_FALLBACK_PASSWORD", "")
+    SMTP_FALLBACK_FROM_EMAIL: str = os.environ.get(
+        "SMTP_FALLBACK_FROM_EMAIL", SMTP_FROM_EMAIL
+    )
+    SMTP_FALLBACK_USE_TLS: bool = _bool_env("SMTP_FALLBACK_USE_TLS", "true")
+    SMTP_FALLBACK_USE_SSL: bool = _bool_env("SMTP_FALLBACK_USE_SSL", "false")
 
     # --- content boundary date -----------------------------------------
     BULK_SEED_START_YEAR: int = 2025

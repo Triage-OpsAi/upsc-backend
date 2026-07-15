@@ -81,15 +81,22 @@ async def request_otp(request: Request, body: OtpRequest):
         logger.warning("DEV OTP for %s is %s", email, otp)
 
     try:
-        await asyncio.to_thread(
+        delivery = await asyncio.to_thread(
             send_email,
             email,
-            "Your Current Affairs Gazette OTP",
+            "Your AspirantOS sign-in code",
             (
-                "Use this one-time password to sign in to The Current Affairs Gazette:\n\n"
+                "Use this one-time password to sign in to AspirantOS:\n\n"
                 f"{otp}\n\n"
                 f"It expires in {settings.OTP_TTL_MINUTES} minutes. If you did not request this, ignore this email."
             ),
+        )
+        logger.info(
+            "OTP email accepted for %s; message_id=%s provider=%s attempts=%s",
+            email,
+            delivery.message_id,
+            delivery.provider,
+            delivery.attempts,
         )
     except Exception as error:
         async with acquire() as conn:
